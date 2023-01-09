@@ -18,6 +18,10 @@ public:
         }
     }
 
+    ~ThreadPool() {
+        this->await();
+    }
+
     void AddTask(std::function<void()> task) {
         auto lock = std::lock_guard(this->mu);
         this->tasks.push(task);
@@ -38,14 +42,6 @@ public:
         });
 
         return future;
-    }
-
-    void Await() {
-        this->isEnding = true;
-
-        for (auto& w: this->workers) {
-            w.join();
-        }
     }
 
 private:
@@ -77,6 +73,14 @@ private:
             task();
         }
     }
+
+    void await() {
+        this->isEnding = true;
+
+        for (auto& w: this->workers) {
+            w.join();
+        }
+    }
 };
 
 int main() {
@@ -87,6 +91,4 @@ int main() {
             return 34 + 19;
         });
     }
-
-    pool->Await();
 }
