@@ -4,17 +4,27 @@
 #include <mutex>
 #include <functional>
 #include <future>
+#include <chrono>
+
+#include "Worker.h"
 
 class ThreadPool {
 public:
-    ThreadPool(int workersCount) {
-        this->workers.reserve(workersCount);
+    ThreadPool(int initialWorkersCount, int tasksBatchSize = 1) {
+        this->workersCount = initialWorkersCount;
 
-        while (workersCount--) {
-            auto worker = std::thread([&](){
-                this->loop();
+        this->workersTasks.resize(initialWorkersCount);
+        this->workers.reserve(initialWorkersCount);
+
+        for (int i = 0; i < initialWorkersCount; ++i) {
+            int workerId = i;
+
+            auto worker = new Worker([&, workerId, tasksBatchSize]() {
+                return this->putTasks(workerId, tasksBatchSize);
             });
+
             this->workers.push_back(std::move(worker));
+            this->workersTasks[workerId] = std::queue<std::function<void()>>();
         }
     }
 
@@ -24,7 +34,9 @@ public:
 
     void AddTask(std::function<void()> task) {
         auto lock = std::lock_guard(this->mu);
-        this->tasks.push(task);
+
+        this->workersTasks[this->nextWorkerId].push(task);
+        this->nextWorkerId = (this->nextWorkerId + 1) % this->workersCount;
     }
 
     template <typename T>
@@ -46,39 +58,36 @@ public:
 
 private:
     bool isEnding = false;
+    int nextWorkerId = 0;
+    int workersCount;
+
     std::mutex mu;
-    std::vector<std::thread> workers;
-    std::queue<std::function<void()>> tasks;
+    std::vector<Worker*> workers;
+    std::vector<std::queue<std::function<void()>>> workersTasks;
 
-    void loop() {
-        for (;;) {
-            if (!this->mu.try_lock()) {
-                continue;
+    std::queue<std::function<void()>> putTasks(int workerId, int tasksQueueSize) {
+        std::queue<std::function<void()>> externalTasks;
+        auto lock = std::lock_guard(this->mu);
+
+        while (tasksQueueSize--) {
+            if (this->workersTasks[workerId].empty()) {
+                return externalTasks;
             }
 
-            if (this->isEnding && this->tasks.empty()) {
-                this->mu.unlock();
-                return;
-            }
+            auto task = this->workersTasks[workerId].front();
+            this->workersTasks[workerId].pop();
 
-            if (this->tasks.empty()) {
-                this->mu.unlock();
-                continue;
-            }
-
-            auto task = this->tasks.front();
-            this->tasks.pop();
-            mu.unlock();
-
-            task();
+            externalTasks.push(task);
         }
+
+        return externalTasks;
     }
 
     void await() {
         this->isEnding = true;
 
         for (auto& w: this->workers) {
-            w.join();
+            w->Await();
         }
     }
 };
