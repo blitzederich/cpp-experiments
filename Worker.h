@@ -10,13 +10,21 @@ public:
     Worker(std::function<std::queue<std::function<void()>>()> getExternalTasks) {
         this->getExternalTasks = getExternalTasks;
 
-        this->thread = std::thread([&]() {
+        this->thread = std::thread([this]() {
             this->loop();
         });
     }
 
+    ~Worker() {
+        this->Await();
+    }
+
     void Await() {
-        this->thread.join();
+        this->isEnding = true;
+
+        if (this->thread.joinable()) {
+            this->thread.join();
+        }
     }
 
 private:
@@ -32,7 +40,7 @@ private:
             }
 
             if (this->tasks.empty()) {  
-                this->tryGetTasks();          
+                this->tasks = this->getExternalTasks();        
                 continue;
             }
 
@@ -40,16 +48,6 @@ private:
             this->tasks.pop();
 
             task();
-        }
-    }
-
-    void tryGetTasks() {
-        auto q = this->getExternalTasks();
-        
-        while (!q.empty()) {
-            auto task = q.front();
-            this->tasks.push(task);
-            q.pop();
         }
     }
 };

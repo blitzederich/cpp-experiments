@@ -1,16 +1,22 @@
-#include <iostream>
 #include <queue>
 #include <thread>
 #include <mutex>
 #include <functional>
 #include <future>
-#include <chrono>
 
 #include "Worker.h"
 
 class ThreadPool {
 public:
-    ThreadPool(int initialWorkersCount, int tasksBatchSize = 1) {
+    ThreadPool(int initialWorkersCount, size_t tasksBatchSize = 1) {
+        if (initialWorkersCount < 1) {
+            throw std::invalid_argument("");
+        }
+
+        if (tasksBatchSize < 1) {
+            throw std::invalid_argument("");
+        }
+
         this->workersCount = initialWorkersCount;
 
         this->workersTasks.resize(initialWorkersCount);
@@ -19,7 +25,7 @@ public:
         for (int i = 0; i < initialWorkersCount; ++i) {
             int workerId = i;
 
-            auto worker = new Worker([&, workerId, tasksBatchSize]() {
+            auto worker = std::make_unique<Worker>([this, workerId, tasksBatchSize]() {
                 return this->putTasks(workerId, tasksBatchSize);
             });
 
@@ -29,7 +35,7 @@ public:
     }
 
     ~ThreadPool() {
-        this->await();
+        this->wait();
     }
 
     void AddTask(std::function<void()> task) {
@@ -56,13 +62,17 @@ public:
         return future;
     }
 
+    static size_t GetOptimalWorkersCount() {
+        return std::thread::hardware_concurrency();
+    }
+
 private:
     bool isEnding = false;
     int nextWorkerId = 0;
     int workersCount;
 
     std::mutex mu;
-    std::vector<Worker*> workers;
+    std::vector<std::unique_ptr<Worker>> workers;
     std::vector<std::queue<std::function<void()>>> workersTasks;
 
     std::queue<std::function<void()>> putTasks(int workerId, int tasksQueueSize) {
@@ -83,7 +93,7 @@ private:
         return externalTasks;
     }
 
-    void await() {
+    void wait() {
         this->isEnding = true;
 
         for (auto& w: this->workers) {
@@ -93,11 +103,18 @@ private:
 };
 
 int main() {
-    auto pool = new ThreadPool(8);
+    ThreadPool pool(8);
 
-    for (;;) {
-        auto sum = pool->Async<int>([]() {
+    const auto tasksCount = 10'000'000LL;
+    std::vector<std::future<int>> futures(tasksCount);
+
+    for (auto i = 0; i < tasksCount; ++i) {
+        futures[i] = pool.Async<int>([]() {
             return 34 + 19;
         });
+    }
+
+    for (auto& f: futures) {
+        auto res = f.get();
     }
 }
